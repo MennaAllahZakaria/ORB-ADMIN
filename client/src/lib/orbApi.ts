@@ -38,8 +38,8 @@ export type ApiLesson = {
 export type ApiPayout = {
   _id: string;
   amount?: number;
-  status?: string;
-  method?: string;
+  status?: "pending" | "processing" | "completed" | "failed" | string;
+  method?: "wallet" | "bank" | string;
   teacherId?: { _id?: string; firstName?: string; lastName?: string; email?: string } | string;
 };
 
