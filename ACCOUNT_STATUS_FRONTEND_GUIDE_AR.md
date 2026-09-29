@@ -141,7 +141,66 @@ Content-Type: application/json
 | `429` | تم تجاوز rate limit | اطلبي من المستخدم الانتظار ثم المحاولة |
 | `500` | خطأ خادم | اعرضي رسالة مؤقتة ولا تكرري الطلب تلقائيًا بلا حدود |
 
-## 5. Routes الأدمن لتغيير حالة الحساب مباشرة
+## 5. تعطيل الحساب بواسطة المستخدم نفسه
+
+الطالب أو المدرس يستطيع تعطيل حسابه بنفسه بعد تسجيل الدخول. هذا لا يحذف الحساب ولا يحذف بياناته؛ فقط يغيّر `status` إلى `inactive`.
+
+```http
+PATCH /auth/deactivate-account
+Authorization: Bearer USER_JWT_TOKEN
+```
+
+لا يحتاج الطلب Body. يجب أن تعرض الواجهة Confirmation واضحًا قبل الإرسال، مثل:
+
+> هل أنتِ متأكدة من تعطيل الحساب؟ سيتم تسجيل خروجك ولن تتمكني من الدخول حتى تتم الموافقة على طلب إعادة التفعيل.
+
+### الرد الناجح
+
+```json
+{
+  "status": "success",
+  "message": "Your account has been deactivated. You can request reactivation later.",
+  "data": {
+    "status": "inactive"
+  }
+}
+```
+
+### ما الذي تفعله الواجهة بعد `200`؟
+
+1. امسحي التوكن من التخزين المحلي.
+2. امسحي بيانات المستخدم من state/context.
+3. أغلقي أي WebSocket أو جلسة Meeting مفتوحة.
+4. انقلي المستخدم إلى شاشة Login أو شاشة تأكيد التعطيل.
+5. اعرضي زر **طلب إعادة تفعيل الحساب** يستخدم `POST /auth/reactivation-request`.
+
+الحساب سيُمنع تلقائيًا من استخدام أي token قديم لأن `protect` يرفض الحسابات ذات الحالة `inactive`.
+
+### قواعد وحالات الخطأ
+
+- هذا الـroute متاح للطالب والمدرس فقط.
+- حسابات `admin` و`superAdmin` لا يمكنها تعطيل نفسها من تطبيق المستخدم.
+- إذا كان الحساب معطلًا بالفعل، يرجع السيرفر `400`.
+- إذا انتهت صلاحية الـJWT يرجع `401`.
+- إذا كان الحساب محظورًا يرجع `403`.
+
+### مثال Frontend
+
+```ts
+async function deactivateAccount(token: string) {
+  await orbApi("/auth/deactivate-account", {
+    token,
+    method: "PATCH",
+  });
+
+  localStorage.removeItem("token");
+  // clearAuthContext();
+  // closeMeetingConnection();
+  // navigate("/login?accountDeactivated=true");
+}
+```
+
+## 6. Routes الأدمن لتغيير حالة الحساب مباشرة
 
 هذه المسارات تحتاج:
 
@@ -215,7 +274,7 @@ PATCH /admin/users/USER_ID/status
 - الأدمن لا يستطيع تغيير حالة حسابه بنفسه.
 - الأدمن العادي لا يستطيع تغيير حالة `admin` أو `superAdmin`؛ ذلك محصور في `superAdmin` حسب قواعد الـBackend.
 
-## 6. Routes طلبات إعادة التفعيل في Admin
+## 7. Routes طلبات إعادة التفعيل في Admin
 
 ### عرض الطلبات المعلقة
 
@@ -315,7 +374,7 @@ Authorization: Bearer ADMIN_JWT_TOKEN
 
 > لا تسمحي للواجهة بإعادة إرسال قرار لنفس الطلب بعد نجاحه؛ احذفيه من قائمة `pending` أو أعيدي تحميل القائمة.
 
-## 7. تدفق الواجهة المقترح بالكامل
+## 8. تدفق الواجهة المقترح بالكامل
 
 ```text
 Login / Google Login
@@ -345,7 +404,7 @@ Admin Dashboard
                                              --> user.status كما هو
 ```
 
-## 8. ملاحظات مهمة للفريق
+## 9. ملاحظات مهمة للفريق
 
 1. لا تعتمدي على إخفاء الزر فقط؛ الـBackend هو مصدر الصلاحية النهائي.
 2. لا تخزني قرار إعادة التفعيل في Local Storage على أنه حقيقة نهائية؛ أعيدي قراءة حالة المستخدم بعد login.
