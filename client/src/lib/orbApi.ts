@@ -43,6 +43,19 @@ export type ApiPayout = {
   teacherId?: { _id?: string; firstName?: string; lastName?: string; email?: string } | string;
 };
 
+export type ApiReactivationRequest = {
+  _id: string;
+  email?: string;
+  reason?: string;
+  requestedStatus?: "inactive" | "banned" | string;
+  status?: "pending" | "approved" | "rejected" | string;
+  user?: ApiUser | string;
+  reviewedBy?: ApiUser | string | null;
+  reviewedAt?: string | null;
+  adminNote?: string;
+  createdAt?: string;
+};
+
 export type ApiSupportTicket = {
   _id: string;
   user?: { _id?: string; firstName?: string; lastName?: string; email?: string } | string;
@@ -85,6 +98,7 @@ export type ApiDashboardSummary = {
     openDisputes: number;
     pendingPayouts: number;
     openSupportTickets: number;
+    pendingReactivationRequests?: number;
   };
   queues: {
     pendingTeachers: ApiUser[];

@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { useOrbAuth } from "@/contexts/OrbAuthContext";
 import { orbImageUrl } from "@/lib/orbAssets";
 import { buildDisputeResolution, canAdminResolveLesson, canFinalizeTeacherReview, isLessonAdminResolved } from "@/lib/adminOperations";
-import { ApiAuditLog, ApiDashboardSummary, ApiDispute, ApiDisputedLesson, ApiLesson, ApiNotification, ApiPayout, ApiSupportTicket, ApiUser, fullName, initials, orbApi } from "@/lib/orbApi";
+import { ApiAuditLog, ApiDashboardSummary, ApiDispute, ApiDisputedLesson, ApiLesson, ApiNotification, ApiPayout, ApiReactivationRequest, ApiSupportTicket, ApiUser, fullName, initials, orbApi } from "@/lib/orbApi";
 import {
   Table,
   TableBody,
@@ -60,6 +60,7 @@ type NavigationKey =
   | "disputedLessons"
   | "disputes"
   | "payouts"
+  | "reactivation"
   | "support"
   | "notifications"
   | "admins"
@@ -89,6 +90,7 @@ const navigation = [
   { id: "disputedLessons" as const, label: "الحصص المتنازع عليها", icon: Gavel },
   { id: "disputes" as const, label: "النزاعات", icon: CircleDollarSign },
   { id: "payouts" as const, label: "التحويلات المالية", icon: WalletCards },
+  { id: "reactivation" as const, label: "طلبات إعادة التفعيل", icon: UserCheck },
   { id: "support" as const, label: "طلبات الدعم", icon: LifeBuoy },
   { id: "notifications" as const, label: "الإشعارات", icon: Bell },
   { id: "admins" as const, label: "فريق الإدارة", icon: ShieldCheck },
@@ -220,6 +222,7 @@ export default function Home() {
   const [disputes, setDisputes] = useState<ApiDispute[]>([]);
   const [disputedLessons, setDisputedLessons] = useState<ApiDisputedLesson[]>([]);
   const [payouts, setPayouts] = useState<ApiPayout[]>([]);
+  const [reactivationRequests, setReactivationRequests] = useState<ApiReactivationRequest[]>([]);
   const [supportTickets, setSupportTickets] = useState<ApiSupportTicket[]>([]);
   const [notifications, setNotifications] = useState<ApiNotification[]>([]);
   const [dataLoading, setDataLoading] = useState(true);
@@ -254,6 +257,10 @@ export default function Home() {
   const [updatingTeacherAccount, setUpdatingTeacherAccount] = useState(false);
   const [selectedPayout, setSelectedPayout] = useState<ApiPayout | null>(null);
   const [completingPayout, setCompletingPayout] = useState(false);
+  const [selectedReactivation, setSelectedReactivation] = useState<ApiReactivationRequest | null>(null);
+  const [reactivationDecision, setReactivationDecision] = useState<"approved" | "rejected">("approved");
+  const [reactivationNote, setReactivationNote] = useState("");
+  const [resolvingReactivation, setResolvingReactivation] = useState(false);
   const [adminDialogOpen, setAdminDialogOpen] = useState(false);
   const [newAdmin, setNewAdmin] = useState({ firstName: "", lastName: "", email: "", phone: "" });
   const [creatingAdmin, setCreatingAdmin] = useState(false);
@@ -333,7 +340,7 @@ export default function Home() {
   const loadViewData = useCallback(async (view: NavigationKey) => {
     if (!token) return;
     if (loadedViews[view]) return;
-    const needsLoad = ["teachers", "students", "issues", "disputes", "disputedLessons", "payouts", "support", "notifications", "admins"].includes(view);
+    const needsLoad = ["teachers", "students", "issues", "disputes", "disputedLessons", "payouts", "reactivation", "support", "notifications", "admins"].includes(view);
     if (!needsLoad) return;
     setDataLoading(true);
     setSectionLoading(view);
@@ -362,6 +369,10 @@ export default function Home() {
       if (view === "payouts") {
         const response = await orbApi<ApiPayout[]>("/payouts", { token });
         setPayouts(response.data ?? []);
+      }
+      if (view === "reactivation") {
+        const response = await orbApi<ApiReactivationRequest[]>("/admin/account-reactivation-requests?status=pending&page=1&limit=100", { token });
+        setReactivationRequests(response.data ?? []);
       }
       if (view === "support") {
         const response = await orbApi<ApiSupportTicket[]>("/support", { token });
@@ -574,6 +585,23 @@ export default function Home() {
     finally { setCompletingPayout(false); }
   };
 
+  const resolveReactivation = async () => {
+    if (!token || !selectedReactivation) return;
+    setResolvingReactivation(true);
+    try {
+      await orbApi<ApiReactivationRequest>(`/admin/account-reactivation-requests/${selectedReactivation._id}/resolve`, {
+        token,
+        method: "PATCH",
+        body: { decision: reactivationDecision, adminNote: reactivationNote.trim() },
+      });
+      toast.success(reactivationDecision === "approved" ? "تمت إعادة تفعيل الحساب." : "تم رفض طلب إعادة التفعيل.");
+      setReactivationRequests((current) => current.filter((request) => request._id !== selectedReactivation._id));
+      setSelectedReactivation(null);
+      setReactivationNote("");
+    } catch (error) { toast.error(error instanceof Error ? error.message : "تعذر حسم طلب إعادة التفعيل."); }
+    finally { setResolvingReactivation(false); }
+  };
+
   const createAdmin = async () => {
     if (!token || !superAdmin) return;
     if (!newAdmin.firstName.trim() || !newAdmin.lastName.trim() || !newAdmin.email.trim()) {
@@ -664,6 +692,7 @@ export default function Home() {
     if (id === "disputedLessons") return disputedLessons.filter((lesson) => lesson.finalCompletionStatus !== "completed" && lesson.finalCompletionStatus !== "incomplete").length;
     if (id === "disputes") return dashboardSummary?.counts.openDisputes ?? disputes.filter((dispute) => dispute.status !== "resolved").length;
     if (id === "payouts") return dashboardSummary?.counts.pendingPayouts ?? payouts.filter((payout) => payout.status !== "completed").length;
+    if (id === "reactivation") return dashboardSummary?.counts.pendingReactivationRequests ?? reactivationRequests.length;
     if (id === "support") return dashboardSummary?.counts.openSupportTickets ?? supportTickets.filter((ticket) => ticket.status !== "closed").length;
     if (id === "notifications") return notifications.filter((notification) => !notification.read).length;
     return 0;
@@ -924,6 +953,8 @@ export default function Home() {
             <section className="space-y-6"><SectionTitle eyebrow="العدالة المالية" title="حل النزاعات" description="راجعي سبب النزاع والأدلة أولاً، ثم اختاري تحويل المبلغ للمدرس أو الاسترداد للطالب أو الاسترداد الجزئي." /><div className="grid gap-4 lg:grid-cols-2">{disputes.map((dispute) => { const lesson = typeof dispute.lessonId === "string" ? undefined : dispute.lessonId; const lessonTitle = lesson?.title || "درس مرتبط بالنزاع"; return <article key={dispute._id} className="rounded-3xl border border-[#E5EBF2] bg-white p-5 soft-shadow"><div className="flex items-start justify-between gap-3"><div><StatusPill tone={dispute.status === "resolved" ? "teal" : dispute.status === "under_review" ? "gold" : "red"}>{dispute.status === "resolved" ? "تم الحل" : dispute.status === "under_review" ? "قيد المراجعة" : "مفتوح"}</StatusPill><h3 className="mt-3 text-sm font-bold text-[#263E5C]">{lessonTitle}</h3></div><span className="text-[10px] text-[#8A97A5]">{dispute.createdAt ? new Date(dispute.createdAt).toLocaleDateString("ar-EG") : "—"}</span></div><div className="mt-4 rounded-xl bg-[#F8FAFD] p-3"><p className="text-[10px] font-bold text-[#53677F]">سبب النزاع: {dispute.reason || "other"}</p><p className="mt-2 text-[11px] leading-6 text-[#68788D]">{dispute.description || "لا يوجد وصف إضافي من مقدم النزاع."}</p></div>{dispute.evidence?.length ? <p className="mt-3 text-[10px] text-[#61758E]">{dispute.evidence.length} دليل مرفوع للمراجعة داخل نافذة الحل.</p> : null}<div className="mt-4 flex items-center justify-between gap-3">{dispute.resolution?.decision ? <p className="text-[10px] text-[#127054]">القرار: {dispute.resolution.decision}</p> : <p className="text-[10px] text-[#8A97A5]">بانتظار قرار الأدمن</p>}{dispute.status !== "resolved" && <button type="button" onClick={() => { setSelectedDispute(dispute); setDisputeDecision("refund"); setRefundAmount(""); setDisputeNote(""); }} className="rounded-lg bg-[#102A4B] px-3 py-2 text-[10px] font-bold text-white transition hover:bg-[#1769D5]">مراجعة وحل النزاع</button>}</div></article>; })}</div>{!dataLoading && disputes.length === 0 && <div className="rounded-3xl border border-dashed border-[#C9D7E7] bg-white p-10 text-center text-xs text-[#718195]">لا توجد نزاعات مسجلة حالياً.</div>}</section>
           ) : activeView === "payouts" ? (
             <section className="space-y-6"><SectionTitle eyebrow="الإدارة المالية" title="التحويلات المالية" description="سجل التحويلات المتاح في ORB API. لا يتم تأكيد التحويل إلا بعد تنفيذه فعليًا ومراجعة بياناته." /><div className="overflow-hidden rounded-3xl border border-[#E5EBF2] bg-white soft-shadow"><Table><TableHeader><TableRow className="border-[#EAF0F5]"><TableHead className="text-right">المعرّف</TableHead><TableHead className="text-right">المبلغ</TableHead><TableHead className="text-right">الطريقة</TableHead><TableHead className="text-right">الحالة</TableHead><TableHead className="text-center">الإجراء</TableHead></TableRow></TableHeader><TableBody>{payouts.map((payout) => <TableRow key={payout._id}><TableCell className="text-xs text-[#7D8B9C]">{payout._id}</TableCell><TableCell className="font-bold text-[#263E5C]">{payout.amount ?? 0}</TableCell><TableCell className="text-xs text-[#647386]">{payout.method || "—"}</TableCell><TableCell><StatusPill tone={payout.status === "completed" ? "teal" : payout.status === "failed" ? "red" : "gold"}>{payout.status || "pending"}</StatusPill></TableCell><TableCell className="text-center">{(payout.status === "pending" || payout.status === "processing") && <button type="button" onClick={() => setSelectedPayout(payout)} className="rounded-lg bg-[#102A4B] px-3 py-2 text-[10px] font-bold text-white">تأكيد الإتمام</button>}{payout.status === "failed" && <span className="text-[10px] text-[#B12D3B]">يحتاج إعادة تنفيذ</span>}</TableCell></TableRow>)}</TableBody></Table>{!dataLoading && payouts.length === 0 && <p className="p-8 text-center text-xs text-[#718195]">لا توجد تحويلات متاحة.</p>}</div></section>
+          ) : activeView === "reactivation" ? (
+            <section className="space-y-6"><SectionTitle eyebrow="إدارة الحسابات" title="طلبات إعادة تفعيل الحسابات" description="راجعي سبب الطلب وتحققي من بيانات المستخدم قبل إعادة الحساب إلى active. الموافقة تفتح الدخول فورًا، والرفض يترك الحساب على حالته الحالية." /><div className="grid gap-4 lg:grid-cols-2">{reactivationRequests.map((request) => { const requester = typeof request.user === "string" || !request.user ? null : request.user; return <article key={request._id} className="rounded-3xl border border-[#E5EBF2] bg-white p-5 soft-shadow"><div className="flex items-start justify-between gap-3"><div><StatusPill tone="gold">بانتظار المراجعة</StatusPill><h3 className="mt-3 text-sm font-bold text-[#263E5C]">{requester ? fullName(requester) : request.email || "مستخدم ORB"}</h3><p dir="ltr" className="mt-1 text-right text-[10px] text-[#718195]">{requester?.email || request.email || "—"}</p></div><StatusPill tone={request.requestedStatus === "banned" ? "red" : "gold"}>{request.requestedStatus === "banned" ? "محظور" : "غير نشط"}</StatusPill></div><div className="mt-4 rounded-2xl bg-[#F7FAFE] p-4"><p className="text-[10px] font-bold text-[#718195]">سبب المستخدم</p><p className="mt-2 text-xs leading-6 text-[#53677F]">{request.reason || "لم يذكر المستخدم سببًا."}</p></div><div className="mt-4 flex justify-end"><button type="button" onClick={() => { setSelectedReactivation(request); setReactivationDecision("approved"); setReactivationNote(""); }} className="rounded-lg bg-[#1769D5] px-3 py-2 text-[10px] font-bold text-white">مراجعة الطلب</button></div></article>; })}</div>{!dataLoading && reactivationRequests.length === 0 && <div className="rounded-3xl border border-dashed border-[#C9D7E7] bg-white p-10 text-center text-xs text-[#718195]">لا توجد طلبات إعادة تفعيل معلقة.</div>}</section>
           ) : activeView === "support" ? (
             <section className="space-y-6"><SectionTitle eyebrow="مساندة المستخدمين" title="طلبات الدعم" description="تتبّع مشكلات الطلاب والمدرسين ثم أغلقي التذكرة أو أعيدي فتحها وفق الحالة الفعلية." /><div className="grid gap-4 lg:grid-cols-2">{supportTickets.map((ticket) => { const requester = typeof ticket.user === "string" ? "مستخدم ORB" : fullName(ticket.user); return <article key={ticket._id} className="rounded-3xl border border-[#E5EBF2] bg-white p-5 soft-shadow"><div className="flex items-start justify-between gap-3"><div><StatusPill tone={ticket.status === "closed" ? "teal" : ticket.status === "in progress" ? "gold" : "blue"}>{ticket.status || "open"}</StatusPill><h3 className="mt-3 text-sm font-bold text-[#263E5C]">{ticket.problemType || "طلب دعم"}</h3></div><span className="text-[10px] text-[#8A97A5]">{ticket.createdAt ? new Date(ticket.createdAt).toLocaleDateString("ar-EG") : "—"}</span></div><p className="mt-3 text-[11px] font-bold text-[#53677F]">{requester}</p><p className="mt-2 text-[11px] leading-6 text-[#68788D]">{ticket.message || "لا توجد تفاصيل إضافية."}</p><div className="mt-4 flex justify-end">{ticket.status === "closed" ? <button type="button" disabled={updatingTicket === ticket._id} onClick={() => void updateSupportTicket(ticket, "open")} className="rounded-lg border border-[#CFE0F5] bg-[#F7FAFE] px-3 py-2 text-[10px] font-bold text-[#1769D5] disabled:opacity-60">إعادة فتح</button> : <button type="button" disabled={updatingTicket === ticket._id} onClick={() => void updateSupportTicket(ticket, "closed")} className="rounded-lg bg-[#102A4B] px-3 py-2 text-[10px] font-bold text-white disabled:opacity-60">إغلاق التذكرة</button>}</div></article>; })}</div>{!dataLoading && supportTickets.length === 0 && <div className="rounded-3xl border border-dashed border-[#C9D7E7] bg-white p-10 text-center text-xs text-[#718195]">لا توجد تذاكر دعم متاحة.</div>}</section>
           ) : activeView === "notifications" ? (
@@ -1002,6 +1033,10 @@ export default function Home() {
 
       <Dialog open={Boolean(selectedPayout)} onOpenChange={(open) => { if (!open) setSelectedPayout(null); }}>
         <DialogContent dir="rtl" className="max-w-lg border-[#D9E5F2] bg-white text-right"><DialogHeader className="text-right"><DialogTitle className="font-display text-xl text-[#102A4B]">تأكيد إتمام التحويل</DialogTitle><DialogDescription className="text-right text-xs leading-6 text-[#6C7D91]">سيتم تحويل حالة السجل إلى مكتمل وتأكيد قيود المحاسبة المرتبطة به. راجعي بيانات التحويل قبل التأكيد.</DialogDescription></DialogHeader>{selectedPayout && <div className="rounded-2xl border border-[#E1EAF3] bg-[#F7FAFE] p-4"><p className="text-[11px] text-[#708095]">معرّف التحويل</p><p dir="ltr" className="mt-1 break-all text-right text-xs font-bold text-[#263E5C]">{selectedPayout._id}</p><p className="mt-4 text-[11px] text-[#708095]">المبلغ والطريقة</p><p className="mt-1 text-sm font-bold text-[#263E5C]">{selectedPayout.amount ?? 0} · {selectedPayout.method || "—"}</p></div>}<DialogFooter className="sm:justify-start"><Button type="button" variant="outline" onClick={() => setSelectedPayout(null)} className="border-[#D9E5F2] text-[#58708B]">إلغاء</Button><Button type="button" disabled={completingPayout} onClick={() => void completePayout()} className="bg-[#147255] text-white hover:bg-[#0F5D44]">{completingPayout ? "جارٍ التأكيد…" : "تأكيد إتمام التحويل"}</Button></DialogFooter></DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(selectedReactivation)} onOpenChange={(open) => { if (!open) { setSelectedReactivation(null); setReactivationNote(""); } }}>
+        <DialogContent dir="rtl" className="max-w-lg border-[#D9E5F2] bg-white text-right"><DialogHeader className="text-right"><DialogTitle className="font-display text-xl text-[#102A4B]">حسم طلب إعادة تفعيل الحساب</DialogTitle><DialogDescription className="text-right text-xs leading-6 text-[#6C7D91]">الموافقة تغيّر حالة الحساب إلى active وتسمح له بتسجيل الدخول. الرفض يبقي الحالة الحالية كما هي.</DialogDescription></DialogHeader>{selectedReactivation && <div className="space-y-4"><div className="rounded-xl bg-[#F7FAFE] p-4"><p className="text-sm font-bold text-[#263E5C]">{typeof selectedReactivation.user === "string" || !selectedReactivation.user ? selectedReactivation.email : fullName(selectedReactivation.user)}</p><p className="mt-2 text-xs leading-6 text-[#53677F]">{selectedReactivation.reason || "لا يوجد سبب إضافي."}</p></div><fieldset><legend className="mb-2 block text-[11px] font-bold text-[#435873]">القرار</legend><div className="grid grid-cols-2 gap-2"><label className={`cursor-pointer rounded-xl border p-3 text-center text-[11px] font-bold ${reactivationDecision === "approved" ? "border-[#1769D5] bg-[#EAF2FF] text-[#1769D5]" : "border-[#DCE6F0] text-[#607286]"}`}><input className="sr-only" type="radio" name="reactivation-decision" checked={reactivationDecision === "approved"} onChange={() => setReactivationDecision("approved")} />إعادة التفعيل</label><label className={`cursor-pointer rounded-xl border p-3 text-center text-[11px] font-bold ${reactivationDecision === "rejected" ? "border-[#B12D3B] bg-[#FFF2F3] text-[#B12D3B]" : "border-[#DCE6F0] text-[#607286]"}`}><input className="sr-only" type="radio" name="reactivation-decision" checked={reactivationDecision === "rejected"} onChange={() => setReactivationDecision("rejected")} />رفض الطلب</label></div></fieldset><label className="block"><span className="mb-2 block text-[11px] font-bold text-[#435873]">ملاحظة الأدمن</span><textarea value={reactivationNote} onChange={(event) => setReactivationNote(event.target.value)} rows={3} placeholder="اكتبي سبب القرار أو أي تعليمات للمستخدم" className="w-full resize-none rounded-xl border border-[#DCE6F0] bg-[#FBFDFF] p-3 text-xs outline-none focus:border-[#1769D5]" /></label></div>}<DialogFooter className="sm:justify-start"><Button type="button" variant="outline" onClick={() => setSelectedReactivation(null)} className="border-[#D9E5F2] text-[#58708B]">إلغاء</Button><Button type="button" disabled={resolvingReactivation} onClick={() => void resolveReactivation()} className={reactivationDecision === "rejected" ? "bg-[#B12D3B] text-white hover:bg-[#94212D]" : "bg-[#1769D5] text-white hover:bg-[#0F56B4]"}>{resolvingReactivation ? "جارٍ حفظ القرار…" : "تأكيد القرار"}</Button></DialogFooter></DialogContent>
       </Dialog>
 
       <Dialog open={superAdmin && adminDialogOpen} onOpenChange={setAdminDialogOpen}>
