@@ -40,7 +40,28 @@ export type ApiPayout = {
   amount?: number;
   status?: "pending" | "processing" | "completed" | "failed" | string;
   method?: "wallet" | "bank" | string;
-  teacherId?: { _id?: string; firstName?: string; lastName?: string; email?: string } | string;
+  details?: {
+    walletNumber?: string;
+    bankName?: string;
+    accountNumber?: string;
+    accountHolderName?: string;
+  };
+  teacherId?: {
+    _id?: string;
+    firstName?: string;
+    lastName?: string;
+    email?: string;
+    teacherProfile?: {
+      paymentInfo?: {
+        method?: string;
+        accountName?: string;
+        accountNumber?: string;
+        bankName?: string;
+        walletProvider?: string;
+        phoneNumber?: string;
+      };
+    };
+  } | string;
   createdAt?: string;
 };
 
