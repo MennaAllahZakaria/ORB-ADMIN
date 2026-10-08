@@ -41,6 +41,7 @@ export type ApiPayout = {
   status?: "pending" | "processing" | "completed" | "failed" | string;
   method?: "wallet" | "bank" | string;
   teacherId?: { _id?: string; firstName?: string; lastName?: string; email?: string } | string;
+  createdAt?: string;
 };
 
 export type ApiReactivationRequest = {
@@ -63,6 +64,9 @@ export type ApiSupportTicket = {
   message?: string;
   status?: "open" | "in progress" | "closed" | string;
   image?: string;
+  adminReply?: string;
+  adminRepliedAt?: string;
+  adminRepliedBy?: ApiUser | string;
   createdAt?: string;
 };
 
